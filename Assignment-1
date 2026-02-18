@@ -1,0 +1,106 @@
+#!/usr/bin/env python3
+
+import sys
+from Bio import SeqIO
+from Bio.Seq import Seq
+from Bio.SeqRecord import SeqRecord
+
+RE_SITES = {
+    "EcoRI": "GAATTC",
+    "BamHI": "GGATCC",
+    "HindIII": "AAGCTT",
+    "PstI": "CTGCAG",
+    "XbaI": "TCTAGA",
+    "KpnI": "GGTACC",
+    "SalI": "GTCGAC",
+    "SmaI": "CCCGGG",
+    "SacI": "GAGCTC",
+    "SphI": "GCATGC"
+}
+
+DEFAULT_REPLICATION_MODULE = (
+    "ATGACAGGTTTTGCTGATGACGATGACGATGACGAT"
+)
+
+def load_marker_table(marker_file):
+    markers = {}
+    with open(marker_file) as f:
+        for line in f:
+            name, label = line.strip().split(",")
+            markers[name] = label
+    return markers
+
+def find_ori(sequence):
+    skew = 0
+    min_skew = 0
+    ori_index = 0
+
+    for i, base in enumerate(sequence):
+        if base == "G":
+            skew += 1
+        elif base == "C":
+            skew -= 1
+
+        if skew < min_skew:
+            min_skew = skew
+            ori_index = i
+
+    return sequence[ori_index: ori_index + 1000]
+
+
+def parse_design(design_file):
+    enzymes = []
+    markers = []
+
+    with open(design_file) as f:
+        for line in f:
+            if line.strip():
+                _, value = line.strip().split(",")
+                value = value.strip()
+                if value in RE_SITES:
+                    enzymes.append(value)
+                else:
+                    markers.append(value)
+    return enzymes, markers
+
+
+def remove_re_sites(seq, enzymes):
+    for enzyme in enzymes:
+        site = RE_SITES.get(enzyme)
+        if site:
+            seq = seq.replace(site, "")
+    return seq
+
+
+def build_plasmid(input_fa, design_txt, marker_tab, output_fa):
+
+    genome = str(SeqIO.read(input_fa, "fasta").seq).upper()
+    enzymes, required_markers = parse_design(design_txt)
+    marker_db = load_marker_table(marker_tab)
+
+    ori = find_ori(genome)
+    cleaned_genome = remove_re_sites(genome, enzymes)
+
+    plasmid = ori + DEFAULT_REPLICATION_MODULE + cleaned_genome
+
+    for marker in required_markers:
+        if marker in marker_db and marker_db[marker] not in plasmid:
+            plasmid += marker_db[marker]
+        else:
+            print(f"[INFO] Marker {marker} not found or already present")
+
+    record = SeqRecord(
+        Seq(plasmid),
+        id="Constructed_Plasmid",
+        description="Auto-generated host-compatible plasmid"
+    )
+
+    SeqIO.write(record, output_fa, "fasta")
+    print("Plasmid construction complete")
+
+if __name__ == "__main__":
+    if len(sys.argv) != 5:
+        print("Usage: python plasmid_builder.py Input.fa Design.txt markers.tab Output.fa")
+        sys.exit(1)
+
+    build_plasmid(*sys.argv[1:])
